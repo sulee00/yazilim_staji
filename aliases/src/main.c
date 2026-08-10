@@ -1,82 +1,140 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/uart.h>
-#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/adc.h>
+#include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/printk.h>
+#include <stdio.h>
+#include <string.h>
 #include <stdbool.h>
 
-/* DeviceTree tanımları */
-#define SENSOR_NODE DT_ALIAS(sensor_uart)
-#define LED0_NODE   DT_ALIAS(led0) // Lojik analizör D2 kanalı için debug pini
+/*Device Tree*/
+#define UART_NODE DT_ALIAS(sensor_uart)
+#define ADC_NODE  DT_ALIAS(lm35_adc)
+#define I2C_NODE  DT_ALIAS(lcd_i2c)
 
-static const struct device *sensor_uart = DEVICE_DT_GET(SENSOR_NODE);
-static const struct gpio_dt_spec debug_pin = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+static const struct device *uart_dev = DEVICE_DT_GET(UART_NODE);
+static const struct device *adc_dev = DEVICE_DT_GET(ADC_NODE);
+static const struct device *i2c_dev = DEVICE_DT_GET(I2C_NODE);
 
-/* Buffer ve Bayrak Yapısı */
-#define BUFFER_SIZE 64
-static uint8_t rx_buffer[BUFFER_SIZE];
-static volatile int rx_index = 0;
-static volatile bool paket_hazir = false;
+/*ADC*/
+#define ADC_CHANNEL 0
+static const struct adc_channel_cfg m_1st_channel_cfg = {
+    .gain             = ADC_GAIN_1,
+    .reference        = ADC_REF_INTERNAL,
+    .acquisition_time = ADC_ACQ_TIME_DEFAULT,
+    .channel_id       = ADC_CHANNEL,
+    .differential     = 0
+};
 
+/*I2C LCD */
+#define LCD_I2C_ADDR 0x27
+#define LCD_BACKLIGHT 0x08
+#define EN 0x04
+#define RS 0x01
 
-void sensor_uart_interrupt_handler(const struct device *dev, void *user_data)
-{
-    /* ANALİZÖR D2: Kesmeye girildi -> PIN HIGH */
-    gpio_pin_set_dt(&debug_pin, 1);
+void lcd_send_nibble(uint8_t data) {
+    uint8_t tx_data = data | LCD_BACKLIGHT;
+    i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
+    
+    tx_data = data | EN | LCD_BACKLIGHT;
+    i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
+    k_busy_wait(1000); 
+    
+    tx_data = (data & ~EN) | LCD_BACKLIGHT;
+    i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
+    k_busy_wait(100);
+}
 
-    uint8_t c;
+void lcd_send_cmd(uint8_t cmd) {
+    lcd_send_nibble(cmd & 0xF0);
+    lcd_send_nibble((cmd << 4) & 0xF0);
+}
 
-    if (!uart_irq_update(dev)) {
-        gpio_pin_set_dt(&debug_pin, 0);
+void lcd_send_data(uint8_t data) {
+    lcd_send_nibble((data & 0xF0) | RS);
+    lcd_send_nibble(((data << 4) & 0xF0) | RS);
+}
+
+void lcd_init(void) {
+    k_msleep(50);
+    lcd_send_nibble(0x30);
+    k_msleep(5);
+    lcd_send_nibble(0x30);
+    k_msleep(1);
+    lcd_send_nibble(0x30);
+    lcd_send_nibble(0x20); 
+    
+    lcd_send_cmd(0x28); 
+    lcd_send_cmd(0x0C); 
+    lcd_send_cmd(0x01); 
+    k_msleep(2);
+}
+
+void lcd_set_cursor(uint8_t row, uint8_t col) {
+    uint8_t offsets[] = {0x00, 0x40};
+    lcd_send_cmd(0x80 | (col + offsets[row]));
+}
+
+void lcd_print(const char *str) {
+    while (*str) {
+        lcd_send_data(*str++);
+    }
+}
+
+void lcd_clear(void) {
+    lcd_send_cmd(0x01);
+    k_msleep(2);
+}
+
+void main(void) {
+    int err;
+    int16_t sample_buffer[1];
+    char uart_buf[50];
+    char lcd_buf[16];
+    
+    struct adc_sequence sequence = {
+        .channels    = BIT(ADC_CHANNEL),
+        .buffer      = sample_buffer,
+        .buffer_size = sizeof(sample_buffer),
+        .resolution  = 12,
+    };
+
+    if (!device_is_ready(uart_dev) || !device_is_ready(adc_dev) || !device_is_ready(i2c_dev)) {
         return;
     }
 
-    if (uart_irq_rx_ready(dev)) {
-        while (uart_fifo_read(dev, &c, 1) == 1) {
-            if (c == '\n' || c == '\r') {
-                if (rx_index > 0) { // Boş paketleri engelle
-                    rx_buffer[rx_index] = '\0'; 
-                    paket_hazir = true;         
-                    rx_index = 0;              
-                }
-            } 
-            else if (rx_index < BUFFER_SIZE - 1) {
-                rx_buffer[rx_index++] = c;  
-            }
-        }
-    }
-
-    /* ANALİZÖR D2: Kesme bitti -> PIN LOW */
-    gpio_pin_set_dt(&debug_pin, 0);
-}
-
-int main(void)
-{
-    printk("STM32 Zephyr UART Kesme Projesi Baslatiliyor...\n");
-    if (!device_is_ready(sensor_uart)) {
-        printk("HATA: sensor_uart cihazı hazır degil!\n");
-        return 0;
-    }
-
-    if (!gpio_is_ready_dt(&debug_pin)) {
-        printk("HATA: Debug GPIO hazır degil!\n");
-        return 0;
-    }
-    gpio_pin_configure_dt(&debug_pin, GPIO_OUTPUT_INACTIVE);
-
-    uart_irq_callback_user_data_set(sensor_uart, sensor_uart_interrupt_handler, NULL);
-    uart_irq_rx_enable(sensor_uart);
-
-    printk("Sistem hazır. Leonardo'dan veri bekleniyor...\n");
+    adc_channel_setup(adc_dev, &m_1st_channel_cfg);
+    
+    lcd_init();
+    lcd_set_cursor(0, 0);
+    lcd_print("Sistem Basliyor...");
+    k_msleep(2000);
+    lcd_clear();
 
     while (1) {
-        if (paket_hazir) {
-            printk("GELEN PAKET: %s\n", rx_buffer);
-            paket_hazir = false;
+        /* Sensörü Oku */
+        err = adc_read(adc_dev, &sequence);
+        if (err == 0) {
+            int32_t mv_value = sample_buffer[0];
+            int32_t adc_vref = 3300; 
+            
+            adc_raw_to_millivolts(adc_vref, ADC_GAIN_1, 12, &mv_value);
+            int32_t temperature = mv_value / 10;
+
+            /* 1. UART üzerinden Leonardo'ya ilet */
+            sprintf(uart_buf, "SICAKLIK:%d\r\n", temperature);
+            for (int i = 0; i < strlen(uart_buf); i++) {
+                uart_poll_out(uart_dev, uart_buf[i]);
+            }
+            
+            /* 2. LCD Ekrana Yazdır */
+            sprintf(lcd_buf, "Sicaklik: %d C ", temperature);
+            lcd_set_cursor(0, 0); 
+            lcd_print(lcd_buf);
         }
 
-        k_msleep(10); 
+        k_msleep(1000); 
     }
-
-    return 0;
 }
