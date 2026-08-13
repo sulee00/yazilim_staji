@@ -3,6 +3,8 @@
         sensor-uart = &uart4;
         lm35-adc = &adc1;
         lcd-i2c = &i2c1;
+        /* Nucleo'nun kendi hazir butonunu alias olarak bagliyoruz */
+        wake-btn = &user_button;
     };
 };
 
@@ -26,9 +28,9 @@
 /* LM35D (PA0 Pini) için ADC1 Yapılandırması */
 &adc1 {
     status = "okay";
-    pinctrl-0 = <&adc1_in0_pa0>;   /* PA0 pinini fiziksel olarak ADC'ye bagla */
+    pinctrl-0 = <&adc1_in0_pa0>;
     pinctrl-names = "default";
-    st,adc-prescaler = <4>;        /* Zorunlu frekans bolucu (prescaler) ayari */
+    st,adc-prescaler = <4>;
     #address-cells = <1>;
     #size-cells = <0>;
 
@@ -45,5 +47,4 @@
 &i2c1 {
     status = "okay";
     clock-frequency = <I2C_BITRATE_STANDARD>;
-    /* PB8 (SCL) ve PB9 (SDA) pinleri Nucleo-F446RE için varsayılan donanım pinleridir */
 };
