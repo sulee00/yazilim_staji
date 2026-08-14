@@ -6,10 +6,11 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/pm/pm.h>
 #include <zephyr/pm/policy.h>
-#include <zephyr/sys/printk.h>
-#include <soc.h>
 #include <stdio.h>
 #include <string.h>
+
+/* Register kullanmadan donanıma erişmek için ST'nin resmi Low-Level kütüphanesi */
+#include <stm32f4xx_ll_pwr.h> 
 
 /* Device Tree */
 #define UART_NODE DT_ALIAS(sensor_uart)
@@ -36,14 +37,13 @@ static const struct adc_channel_cfg m_1st_channel_cfg = {
 #define EN 0x04
 #define RS 0x01
 
+/* --- LCD Fonksiyonları --- */
 void lcd_send_nibble(uint8_t data) {
     uint8_t tx_data = data | LCD_BACKLIGHT;
     i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
-    
     tx_data = data | EN | LCD_BACKLIGHT;
     i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
     k_busy_wait(1000); 
-    
     tx_data = (data & ~EN) | LCD_BACKLIGHT;
     i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
     k_busy_wait(100);
@@ -67,7 +67,6 @@ void lcd_init(void) {
     k_msleep(1);
     lcd_send_nibble(0x30);
     lcd_send_nibble(0x20); 
-    
     lcd_send_cmd(0x28); 
     lcd_send_cmd(0x0C); 
     lcd_send_cmd(0x01); 
@@ -110,7 +109,7 @@ int main(void) {
     adc_channel_setup(adc_dev, &m_1st_channel_cfg);
     lcd_init();
 
-    /* 1. Sensörden Sıcaklığı Oku */
+    /* 1. Sensörü Oku */
     err = adc_read(adc_dev, &sequence);
     if (err == 0) {
         int32_t mv_value = sample_buffer[0];
@@ -119,33 +118,26 @@ int main(void) {
         adc_raw_to_millivolts(adc_vref, ADC_GAIN_1, 12, &mv_value);
         int temperature = (int)(mv_value / 10);
 
-        /* 2. UART ile Leonardo'ya Gönder */
+        /* 2. UART Gönderimi */
         sprintf(uart_buf, "SICAKLIK:%d\r\n", temperature);
         for (int i = 0; i < strlen(uart_buf); i++) {
             uart_poll_out(uart_dev, uart_buf[i]);
         }
         
-        /* 3. LCD Ekrana Yazdır */
+        /* 3. LCD Yazdır */
         sprintf(lcd_buf, "Sicaklik: %d C ", temperature);
         lcd_set_cursor(0, 0); 
         lcd_print(lcd_buf);
     }
 
-    /*  5 saniye */
+    /*  5 Saniye Bekle ve Ekranı Temizle */
     k_msleep(5000); 
-
-    
     lcd_clear();
 
 
-    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
-    PWR->CR |= (PWR_CR_CWUF | PWR_CR_CSBF);
-    
-    PWR->CSR |= PWR_CSR_EWUP1;
-
-
+    LL_PWR_EnableWakeUpPin(LL_PWR_WAKEUP_PIN1);
 
     pm_state_force(0, &(struct pm_state_info){.state = PM_STATE_SOFT_OFF});
-
+    
     return 0;
 }

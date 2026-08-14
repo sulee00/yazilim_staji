@@ -3,6 +3,16 @@
         sensor-uart = &uart4;
         lm35-adc = &adc1;
         lcd-i2c = &i2c1;
+        wake-btn = &wake_button;
+    };
+
+    buttons {
+        compatible = "gpio-keys";
+        wake_button: button_0 {
+
+            gpios = <&gpioa 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
+            label = "Wakeup Button";
+        };
     };
 };
 
