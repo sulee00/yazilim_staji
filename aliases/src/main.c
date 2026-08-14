@@ -5,7 +5,7 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/sys/printk.h>
-#include <soc.h> /* STM32 Donanım Register Tanımları */
+#include <soc.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -108,7 +108,7 @@ int main(void) {
     adc_channel_setup(adc_dev, &m_1st_channel_cfg);
     lcd_init();
 
-    /* 1. Sensörden Sıcaklığı Oku */
+   
     err = adc_read(adc_dev, &sequence);
     if (err == 0) {
         int32_t mv_value = sample_buffer[0];
@@ -117,41 +117,33 @@ int main(void) {
         adc_raw_to_millivolts(adc_vref, ADC_GAIN_1, 12, &mv_value);
         int temperature = (int)(mv_value / 10);
 
-        /* 2. UART ile Leonardo'ya Gönder */
         sprintf(uart_buf, "SICAKLIK:%d\r\n", temperature);
         for (int i = 0; i < strlen(uart_buf); i++) {
             uart_poll_out(uart_dev, uart_buf[i]);
         }
         
-        /* 3. LCD Ekrana Yazdır */
+        
         sprintf(lcd_buf, "Sicaklik: %d C ", temperature);
         lcd_set_cursor(0, 0); 
         lcd_print(lcd_buf);
     }
 
-    /* 4. Ölçümü tam 5 saniye ekranda tut */
+    /*5 saniye  */
     k_msleep(5000); 
 
-    /* 5. Ekranı temizle */
+    /*Ekranı temizle */
     lcd_clear();
 
-    /* 6. GERÇEK SHUTDOWN (STANDBY) MODUNA GİRİŞ */
-    /* PWR Clock'u aktif et */
     RCC->APB1ENR |= RCC_APB1ENR_PWREN;
 
-    /* Eski uyku ve wake-up bayraklarını temizle (CWUF ve CSBF bitleri) */
     PWR->CR |= (PWR_CR_CWUF | PWR_CR_CSBF);
 
-    /* PA0 (WKUP1) Pinini Uyanma Kaynağı Olarak Aktif Et */
     PWR->CSR |= PWR_CSR_EWUP1;
 
-    /* Standby Modu Seç (PDDS biti = 1) */
     PWR->CR |= PWR_CR_PDDS;
 
-    /* Cortex-M4 Derin Uyku (SLEEPDEEP) Bitini Aktif Et */
     SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
 
-    /* Çipi Kapat: WFI (Wait For Interrupt) komutu ile Standby'a gir */
     __WFI();
 
     return 0;
