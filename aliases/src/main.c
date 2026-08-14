@@ -4,38 +4,22 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/gpio.h>
-#include <zephyr/pm/pm.h>
 #include <zephyr/sys/printk.h>
+#include <soc.h> /* STM32 Donanım Register Tanımları */
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
 
 /* Device Tree */
 #define UART_NODE DT_ALIAS(sensor_uart)
 #define ADC_NODE  DT_ALIAS(lm35_adc)
 #define I2C_NODE  DT_ALIAS(lcd_i2c)
-#define WAKE_BTN_NODE DT_ALIAS(wake_btn)
 
 static const struct device *uart_dev = DEVICE_DT_GET(UART_NODE);
 static const struct device *adc_dev = DEVICE_DT_GET(ADC_NODE);
 static const struct device *i2c_dev = DEVICE_DT_GET(I2C_NODE);
 
-/* Uyandırma Butonu Yapılandırması */
-static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(WAKE_BTN_NODE, gpios, {0});
-static struct gpio_callback button_cb_data;
-
-/* Sistemi uyutmak/uyandırmak için Semafor (Sinyal bayrağı) */
-K_SEM_DEFINE(wake_sem, 0, 1);
-
-/* Butona basıldığında çalışacak Kesme (Interrupt) Fonksiyonu */
-void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins) {
-    /* Uyuyan sisteme "uyan" sinyali gönder */
-    k_sem_give(&wake_sem);
-}
-
-/* ADC */
-#define ADC_CHANNEL 0
+/* LM35 Sensörü PA1 pininde (ADC Kanal 1) */
+#define ADC_CHANNEL 1
 static const struct adc_channel_cfg m_1st_channel_cfg = {
     .gain             = ADC_GAIN_1,
     .reference        = ADC_REF_INTERNAL,
@@ -108,7 +92,7 @@ int main(void) {
     int err;
     int16_t sample_buffer[1];
     char uart_buf[50];
-    char lcd_buf[16];
+    char lcd_buf[32];
     
     struct adc_sequence sequence = {
         .channels    = BIT(ADC_CHANNEL),
@@ -117,59 +101,58 @@ int main(void) {
         .resolution  = 12,
     };
 
-    /* Cihazların hazır olup olmadığını kontrol et */
-    if (!device_is_ready(uart_dev) || !device_is_ready(adc_dev) || 
-        !device_is_ready(i2c_dev) || !device_is_ready(button.port)) {
+    if (!device_is_ready(uart_dev) || !device_is_ready(adc_dev) || !device_is_ready(i2c_dev)) {
         return 0;
     }
 
-    /* Mavi Buton Kesme (Interrupt) Ayarları */
-    gpio_pin_configure_dt(&button, GPIO_INPUT);
-    gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
-    gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
-    gpio_add_callback(button.port, &button_cb_data);
-
-    /* ADC Kurulumu */
     adc_channel_setup(adc_dev, &m_1st_channel_cfg);
-    
-    /* LCD Başlangıç */
     lcd_init();
-    lcd_set_cursor(0, 0);
-    lcd_print("Sistem Basliyor");
-    k_msleep(2000);
 
-    while (1) {
-        /* Ekranı temizle (Uyku modunda ekranda yazı kalmasın) */
-        lcd_clear();
-
-        k_sem_take(&wake_sem, K_FOREVER);
-
-        /* --- SİSTEM UYANDI --- */
+    /* 1. Sensörden Sıcaklığı Oku */
+    err = adc_read(adc_dev, &sequence);
+    if (err == 0) {
+        int32_t mv_value = sample_buffer[0];
+        int32_t adc_vref = 3300; 
         
-        /* Sensörü Oku */
-        err = adc_read(adc_dev, &sequence);
-        if (err == 0) {
-            int32_t mv_value = sample_buffer[0];
-            int32_t adc_vref = 3300; 
-            
-            adc_raw_to_millivolts(adc_vref, ADC_GAIN_1, 12, &mv_value);
-            int temperature = (int)(mv_value / 10);
+        adc_raw_to_millivolts(adc_vref, ADC_GAIN_1, 12, &mv_value);
+        int temperature = (int)(mv_value / 10);
 
-            /* 1. UART üzerinden Leonardo'ya ilet */
-            sprintf(uart_buf, "SICAKLIK:%d\r\n", temperature);
-            for (int i = 0; i < strlen(uart_buf); i++) {
-                uart_poll_out(uart_dev, uart_buf[i]);
-            }
-            
-            /* 2. LCD Ekrana Yazdır */
-            sprintf(lcd_buf, "Sicaklik: %d C ", temperature);
-            lcd_set_cursor(0, 0); 
-            lcd_print(lcd_buf);
+        /* 2. UART ile Leonardo'ya Gönder */
+        sprintf(uart_buf, "SICAKLIK:%d\r\n", temperature);
+        for (int i = 0; i < strlen(uart_buf); i++) {
+            uart_poll_out(uart_dev, uart_buf[i]);
         }
-
-        /* 5 saniye */
-        k_msleep(5000); 
+        
+        /* 3. LCD Ekrana Yazdır */
+        sprintf(lcd_buf, "Sicaklik: %d C ", temperature);
+        lcd_set_cursor(0, 0); 
+        lcd_print(lcd_buf);
     }
-    
+
+    /* 4. Ölçümü tam 5 saniye ekranda tut */
+    k_msleep(5000); 
+
+    /* 5. Ekranı temizle */
+    lcd_clear();
+
+    /* 6. GERÇEK SHUTDOWN (STANDBY) MODUNA GİRİŞ */
+    /* PWR Clock'u aktif et */
+    RCC->APB1ENR |= RCC_APB1ENR_PWREN;
+
+    /* Eski uyku ve wake-up bayraklarını temizle (CWUF ve CSBF bitleri) */
+    PWR->CR |= (PWR_CR_CWUF | PWR_CR_CSBF);
+
+    /* PA0 (WKUP1) Pinini Uyanma Kaynağı Olarak Aktif Et */
+    PWR->CSR |= PWR_CSR_EWUP1;
+
+    /* Standby Modu Seç (PDDS biti = 1) */
+    PWR->CR |= PWR_CR_PDDS;
+
+    /* Cortex-M4 Derin Uyku (SLEEPDEEP) Bitini Aktif Et */
+    SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
+
+    /* Çipi Kapat: WFI (Wait For Interrupt) komutu ile Standby'a gir */
+    __WFI();
+
     return 0;
 }
