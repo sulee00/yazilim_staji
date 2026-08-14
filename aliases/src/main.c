@@ -131,25 +131,20 @@ int main(void) {
         lcd_print(lcd_buf);
     }
 
-    /* 4. Ölçümü tam 5 saniye ekranda tut */
+    /*  5 saniye */
     k_msleep(5000); 
 
-    /* 5. Ekranı temizle */
+    
     lcd_clear();
 
-    /* 6. UYANMA KAYNAĞI VE STANDBY (SOFT OFF) BAĞLANTISI */
+
     RCC->APB1ENR |= RCC_APB1ENR_PWREN;
     PWR->CR |= (PWR_CR_CWUF | PWR_CR_CSBF);
     
-    /* PA0 (WKUP1) Pinini Uyanma Kaynağı Olarak Aktif Et */
     PWR->CSR |= PWR_CSR_EWUP1;
 
-    /* NOT: Buton basıldığında GND'ye çekiyorsa (Falling Edge), 
-     * aşağıdaki satırın başındaki yorum işaretini (//) kaldırıp test edebilirsin:
-     */
-    // PWR->CR |= PWR_CR_WUPP;
 
-    /* Zephyr standart donanımdan bağımsız derin uyku komutu */
+
     pm_state_force(0, &(struct pm_state_info){.state = PM_STATE_SOFT_OFF});
 
     return 0;
