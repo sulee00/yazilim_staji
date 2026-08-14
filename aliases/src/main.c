@@ -4,6 +4,8 @@
 #include <zephyr/drivers/uart.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/pm/pm.h>
+#include <zephyr/pm/policy.h>
 #include <zephyr/sys/printk.h>
 #include <soc.h>
 #include <stdio.h>
@@ -108,7 +110,7 @@ int main(void) {
     adc_channel_setup(adc_dev, &m_1st_channel_cfg);
     lcd_init();
 
-   
+    /* 1. Sensörden Sıcaklığı Oku */
     err = adc_read(adc_dev, &sequence);
     if (err == 0) {
         int32_t mv_value = sample_buffer[0];
@@ -117,34 +119,38 @@ int main(void) {
         adc_raw_to_millivolts(adc_vref, ADC_GAIN_1, 12, &mv_value);
         int temperature = (int)(mv_value / 10);
 
+        /* 2. UART ile Leonardo'ya Gönder */
         sprintf(uart_buf, "SICAKLIK:%d\r\n", temperature);
         for (int i = 0; i < strlen(uart_buf); i++) {
             uart_poll_out(uart_dev, uart_buf[i]);
         }
         
-        
+        /* 3. LCD Ekrana Yazdır */
         sprintf(lcd_buf, "Sicaklik: %d C ", temperature);
         lcd_set_cursor(0, 0); 
         lcd_print(lcd_buf);
     }
 
-    /*5 saniye  */
+    /* 4. Ölçümü tam 5 saniye ekranda tut */
     k_msleep(5000); 
 
-    /*Ekranı temizle */
+    /* 5. Ekranı temizle */
     lcd_clear();
 
+    /* 6. UYANMA KAYNAĞI VE STANDBY (SOFT OFF) BAĞLANTISI */
     RCC->APB1ENR |= RCC_APB1ENR_PWREN;
-
     PWR->CR |= (PWR_CR_CWUF | PWR_CR_CSBF);
-
+    
+    /* PA0 (WKUP1) Pinini Uyanma Kaynağı Olarak Aktif Et */
     PWR->CSR |= PWR_CSR_EWUP1;
 
-    PWR->CR |= PWR_CR_PDDS;
+    /* NOT: Buton basıldığında GND'ye çekiyorsa (Falling Edge), 
+     * aşağıdaki satırın başındaki yorum işaretini (//) kaldırıp test edebilirsin:
+     */
+    // PWR->CR |= PWR_CR_WUPP;
 
-    SCB->SCR |= SCB_SCR_SLEEPDEEP_Msk;
-
-    __WFI();
+    /* Zephyr standart donanımdan bağımsız derin uyku komutu */
+    pm_state_force(0, &(struct pm_state_info){.state = PM_STATE_SOFT_OFF});
 
     return 0;
 }
