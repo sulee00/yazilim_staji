@@ -8,8 +8,6 @@
 #include <zephyr/pm/policy.h>
 #include <stdio.h>
 #include <string.h>
-
-/* Register kullanmadan donanıma erişmek için ST'nin resmi Low-Level kütüphanesi */
 #include <stm32f4xx_ll_pwr.h> 
 
 /* Device Tree */
@@ -37,7 +35,7 @@ static const struct adc_channel_cfg m_1st_channel_cfg = {
 #define EN 0x04
 #define RS 0x01
 
-/* --- LCD Fonksiyonları --- */
+
 void lcd_send_nibble(uint8_t data) {
     uint8_t tx_data = data | LCD_BACKLIGHT;
     i2c_write(i2c_dev, &tx_data, 1, LCD_I2C_ADDR);
