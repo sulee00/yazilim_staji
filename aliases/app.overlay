@@ -3,31 +3,6 @@
         sensor-uart = &uart4;
         lm35-adc = &adc1;
         lcd-i2c = &i2c1;
-        wake-btn = &wake_button;
-    };
-
-    buttons {
-        compatible = "gpio-keys";
-        wake_button: button_0 {
-
-            gpios = <&gpioa 0 (GPIO_ACTIVE_HIGH | GPIO_PULL_DOWN)>;
-            label = "Wakeup Button";
-        };
-    };
-};
-
-&pinctrl {
-    uart4_tx_pc10: uart4_tx_pc10 {
-        pinmux = <0x82a>;
-        bias-pull-up;
-    };
-    uart4_rx_pc11: uart4_rx_pc11 {
-        pinmux = <0x82b>;
-    };
-
-    /*LM35 Sensörünü PA1*/
-    adc1_in1_pa1: adc1_in1_pa1 {
-        pinmux = <0x01>;
     };
 };
 
@@ -40,8 +15,6 @@
 
 &adc1 {
     status = "okay";
-    pinctrl-0 = <&adc1_in1_pa1>;
-    pinctrl-names = "default";
     st,adc-prescaler = <4>;
     #address-cells = <1>;
     #size-cells = <0>;
