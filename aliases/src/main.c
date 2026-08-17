@@ -1,3 +1,10 @@
+/*Run Mode: Mikrodenetleyici normal şekilde çalışır. CPU ve çevre birimleri aktiftir. Güç tüketimi en yüksek moddur.
+Sleep Mode: CPU durur, ancak RAM ve birçok çevre birimi çalışmaya devam eder. Interrupt geldiğinde çok hızlı uyanır. → UART bekleme için uygun.
+Stop Mode: CPU ve çoğu clock durur. RAM korunur ama çevre birimlerinin çoğu kapanır. Sleep'ten daha az güç tüketir, uyanması biraz daha farklıdır.
+Standby Mode: Sistemin büyük kısmı kapanır. En düşük güç tüketimine yakın moddur. Uyanınca sistem genellikle resetlenmiş gibi yeniden başlar.
+*/
+
+
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -26,6 +33,7 @@ static const struct device *i2c_dev =
 
 /*ADC AYARLARI*/
 #define ADC_CHANNEL 1
+
 static const struct adc_channel_cfg adc_cfg = {
     .gain             = ADC_GAIN_1,
     .reference        = ADC_REF_INTERNAL,
