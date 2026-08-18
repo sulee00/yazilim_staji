@@ -4,6 +4,9 @@ Stop Mode: CPU ve çoğu clock durur. RAM korunur ama çevre birimlerinin çoğu
 Standby Mode: Sistemin büyük kısmı kapanır. En düşük güç tüketimine yakın moddur. Uyanınca sistem genellikle resetlenmiş gibi yeniden başlar.
 */
 
+/*Stop Modu kullanıyoruz. 
+PM_STATE_SUSPEND_TO_RAM çağrısı yaparak Standard Stop Mode 
+(Ana regülatör devrede, RAM ve Register verileri korunmuş, çekirdek ve çevre birim osilatörleri durmuş)*/
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -19,7 +22,7 @@ Standby Mode: Sistemin büyük kısmı kapanır. En düşük güç tüketimine y
 
 #include "lcd.h"
 
-/* DEVICE TREE ALIASLARI (Donanım Bağımsız) */
+/*DEVICE TREE*/
 #define SW0_NODE   DT_ALIAS(sw0)
 #define ADC_NODE   DT_ALIAS(lm35_adc)
 #define I2C_NODE   DT_ALIAS(lcd_i2c)
@@ -30,7 +33,7 @@ static const struct device *adc_dev     = DEVICE_DT_GET(ADC_NODE);
 static const struct device *i2c_dev     = DEVICE_DT_GET(I2C_NODE);
 static const struct device *uart_dev    = DEVICE_DT_GET(UART_NODE);
 
-/* ADC TANIMLARI */
+/*ADC*/
 #define ADC_CHANNEL 1
 
 static const struct adc_channel_cfg adc_cfg = {
@@ -40,7 +43,6 @@ static const struct adc_channel_cfg adc_cfg = {
     .channel_id       = ADC_CHANNEL,
     .differential     = 0
 };
-
 static struct gpio_callback button_cb_data;
 static volatile bool wake_up_event = false;
 
@@ -49,14 +51,12 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t
 {
     wake_up_event = true;
 }
-
 int main(void)
 {
     int err;
     int16_t sample_buffer[1];
     char uart_buf[50];
     char lcd_buf[32];
-
     struct adc_sequence sequence = {
         .channels    = BIT(ADC_CHANNEL),
         .buffer      = sample_buffer,
@@ -64,7 +64,6 @@ int main(void)
         .resolution  = 12,
     };
 
-    /* Donanım Hazırlık Kontrolleri */
     if (!gpio_is_ready_dt(&button)) {
         printk("Buton (sw0) hazir degil!\n");
         return 0;
@@ -88,17 +87,14 @@ int main(void)
         printk("Buton pin ayari hatasi: %d\n", err);
         return 0;
     }
-
     err = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
     if (err < 0) {
         printk("Buton kesme ayari hatasi: %d\n", err);
         return 0;
     }
-
     gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
     gpio_add_callback(button.port, &button_cb_data);
 
-    /* ADC Yapılandırması */
     err = adc_channel_setup(adc_dev, &adc_cfg);
     if (err < 0) {
         printk("ADC channel setup hatasi: %d\n", err);
@@ -108,10 +104,10 @@ int main(void)
     /* LCD Başlatma */
     lcd_init(i2c_dev);
 
-    printk("\n==============================\n");
+    printk("\n=\n");
     printk("SISTEM BASLATILDI (STOP MODU PROJESI)\n");
     printk("Uyanmak icin butona basiniz.\n");
-    printk("==============================\n");
+    printk("=\n");
 
     while (1) {
         lcd_clear(i2c_dev);
@@ -121,16 +117,14 @@ int main(void)
         printk("STOP (SUSPEND TO RAM) MODUNA GIRILIYOR...\n");
         wake_up_event = false;
 
-        /* Zephyr PM: Stop Modu (RAM korunur, saatler durur) */
+        /*Stop Modu */
         pm_state_force(0, &(struct pm_state_info){PM_STATE_SUSPEND_TO_RAM, 0, 0});
 
         /* Buton kesmesi gelene kadar bekle */
         while (!wake_up_event) {
             k_msleep(10);
         }
-
         printk("UYANDI! Buton kesmesi algilandi.\n");
-
         /* Sıcaklık Ölçümü ve Ekrana Basma */
         err = adc_read(adc_dev, &sequence);
         if (err == 0) {
@@ -143,12 +137,10 @@ int main(void)
             for (int i = 0; i < strlen(uart_buf); i++) {
                 uart_poll_out(uart_dev, uart_buf[i]);
             }
-
             sprintf(lcd_buf, "Ham:%d T:%dC", ham_deger, temperature);
             lcd_clear(i2c_dev);
             lcd_set_cursor(i2c_dev, 0, 0);
             lcd_print(i2c_dev, lcd_buf);
-
             printk("HAM ADC: %d | VOLTAJ: %d mV | SICAKLIK: %d C\n",
                    ham_deger, mv_value, temperature);
         } else {
@@ -158,7 +150,7 @@ int main(void)
             printk("ADC okuma hatasi: %d\n", err);
         }
 
-        /* 5 saniye boyunca ölçüm sonucunu göster, ardından tekrar Stop moduna dön */
+        /* 5 saniye  */
         k_msleep(5000);
     }
 
