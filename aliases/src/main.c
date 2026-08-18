@@ -7,26 +7,30 @@ Standby Mode: Sistemin büyük kısmı kapanır. En düşük güç tüketimine y
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/pm/pm.h>
+#include <zephyr/pm/policy.h>
 #include <zephyr/sys/printk.h>
-#include <cmsis_core.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
+
 #include "lcd.h"
 
-/* DEVICE TREE ALIASLARI */
-#define UART_NODE DT_ALIAS(sensor_uart)
-#define ADC_NODE  DT_ALIAS(lm35_adc)
-#define I2C_NODE  DT_ALIAS(lcd_i2c)
+/* DEVICE TREE ALIASLARI (Donanım Bağımsız) */
+#define SW0_NODE   DT_ALIAS(sw0)
+#define ADC_NODE   DT_ALIAS(lm35_adc)
+#define I2C_NODE   DT_ALIAS(lcd_i2c)
+#define UART_NODE  DT_ALIAS(sensor_uart)
 
-static const struct device *uart_dev = DEVICE_DT_GET(UART_NODE);
-static const struct device *adc_dev  = DEVICE_DT_GET(ADC_NODE);
-static const struct device *i2c_dev  = DEVICE_DT_GET(I2C_NODE);
+static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET(SW0_NODE, gpios);
+static const struct device *adc_dev     = DEVICE_DT_GET(ADC_NODE);
+static const struct device *i2c_dev     = DEVICE_DT_GET(I2C_NODE);
+static const struct device *uart_dev    = DEVICE_DT_GET(UART_NODE);
 
-/* ADC AYARLARI */
+/* ADC TANIMLARI */
 #define ADC_CHANNEL 1
 
 static const struct adc_channel_cfg adc_cfg = {
@@ -37,21 +41,13 @@ static const struct adc_channel_cfg adc_cfg = {
     .differential     = 0
 };
 
-static volatile bool data_received = false;
-static unsigned char rx_char = 0;
+static struct gpio_callback button_cb_data;
+static volatile bool wake_up_event = false;
 
-static void uart_cb(const struct device *dev, void *user_data)
+/* Butona basıldığında CPU uyanır ve bu callback çalışır */
+void button_pressed(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
-    uart_irq_update(dev);
-
-    if (uart_irq_rx_ready(dev)) {
-        int recv = uart_fifo_read(dev, &rx_char, 1);
-        if (recv > 0) {
-            if (rx_char == 'W' || rx_char == 'w') {
-                data_received = true;
-            }
-        }
-    }
+    wake_up_event = true;
 }
 
 int main(void)
@@ -68,8 +64,9 @@ int main(void)
         .resolution  = 12,
     };
 
-    if (!device_is_ready(uart_dev)) {
-        printk("UART hazir degil!\n");
+    /* Donanım Hazırlık Kontrolleri */
+    if (!gpio_is_ready_dt(&button)) {
+        printk("Buton (sw0) hazir degil!\n");
         return 0;
     }
     if (!device_is_ready(adc_dev)) {
@@ -80,39 +77,61 @@ int main(void)
         printk("I2C hazir degil!\n");
         return 0;
     }
+    if (!device_is_ready(uart_dev)) {
+        printk("UART hazir degil!\n");
+        return 0;
+    }
 
+    /* Buton GPIO Yapılandırması */
+    err = gpio_pin_configure_dt(&button, GPIO_INPUT);
+    if (err < 0) {
+        printk("Buton pin ayari hatasi: %d\n", err);
+        return 0;
+    }
+
+    err = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
+    if (err < 0) {
+        printk("Buton kesme ayari hatasi: %d\n", err);
+        return 0;
+    }
+
+    gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
+    gpio_add_callback(button.port, &button_cb_data);
+
+    /* ADC Yapılandırması */
     err = adc_channel_setup(adc_dev, &adc_cfg);
     if (err < 0) {
         printk("ADC channel setup hatasi: %d\n", err);
         return 0;
     }
 
+    /* LCD Başlatma */
     lcd_init(i2c_dev);
 
-    uart_irq_callback_set(uart_dev, uart_cb);
-    uart_irq_rx_enable(uart_dev);
-
-    printk("\n");
-    printk("==============================\n");
-    printk("STM32F446RE BASLADI\n");
-    printk("UART W bekleniyor...\n");
+    printk("\n==============================\n");
+    printk("SISTEM BASLATILDI (STOP MODU PROJESI)\n");
+    printk("Uyanmak icin butona basiniz.\n");
     printk("==============================\n");
 
     while (1) {
         lcd_clear(i2c_dev);
         lcd_set_cursor(i2c_dev, 0, 0);
-        lcd_print(i2c_dev, "W Bekleniyor");
+        lcd_print(i2c_dev, "STOP MODU...");
 
-        data_received = false;
-        printk("SLEEP MODE'A GIRILIYOR...\n");
+        printk("STOP (SUSPEND TO RAM) MODUNA GIRILIYOR...\n");
+        wake_up_event = false;
 
-        while (!data_received) {
-            __WFI();
+        /* Zephyr PM: Stop Modu (RAM korunur, saatler durur) */
+        pm_state_force(0, &(struct pm_state_info){PM_STATE_SUSPEND_TO_RAM, 0, 0});
+
+        /* Buton kesmesi gelene kadar bekle */
+        while (!wake_up_event) {
+            k_msleep(10);
         }
 
-        printk("UART W GELDI!\n");
-        printk("CPU SLEEP MODE'DAN UYANDI.\n");
+        printk("UYANDI! Buton kesmesi algilandi.\n");
 
+        /* Sıcaklık Ölçümü ve Ekrana Basma */
         err = adc_read(adc_dev, &sequence);
         if (err == 0) {
             int16_t ham_deger = sample_buffer[0];
@@ -139,6 +158,7 @@ int main(void)
             printk("ADC okuma hatasi: %d\n", err);
         }
 
+        /* 5 saniye boyunca ölçüm sonucunu göster, ardından tekrar Stop moduna dön */
         k_msleep(5000);
     }
 
