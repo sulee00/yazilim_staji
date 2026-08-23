@@ -1,8 +1,9 @@
 / {
     aliases {
-        sensor-uart = &uart4;
+        sw0 = &user_button;
         lm35-adc = &adc1;
         lcd-i2c = &i2c1;
+        sensor-uart = &uart4;
     };
 };
 
@@ -13,9 +14,14 @@
     pinctrl-names = "default";
 };
 
+&i2c1 {
+    status = "okay";
+    clock-frequency = <I2C_BITRATE_STANDARD>;
+};
+
 &adc1 {
     status = "okay";
-    st,adc-prescaler = <4>;
+    st,adc-prescaler = <2>;
     #address-cells = <1>;
     #size-cells = <0>;
 
@@ -26,9 +32,4 @@
         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
         zephyr,resolution = <12>;
     };
-};
-
-&i2c1 {
-    status = "okay";
-    clock-frequency = <I2C_BITRATE_STANDARD>;
 };
