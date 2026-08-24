@@ -1,35 +1,32 @@
 / {
     aliases {
-        sw0 = &user_button;
-        lm35-adc = &adc1;
-        lcd-i2c = &i2c1;
-        sensor-uart = &uart4;
+        esp32-wifi = &esp32;
     };
 };
 
-&uart4 {
-    status = "okay";
-    current-speed = <115200>;
-    pinctrl-0 = <&uart4_tx_pc10 &uart4_rx_pc11>;
-    pinctrl-names = "default";
+&pinctrl {
+    uart4_tx_pc10: uart4_tx_pc10 {
+        pinmux = <STM32_PINMUX('C', 10, AF8)>;
+    };
+    uart4_rx_pc11: uart4_rx_pc11 {
+        pinmux = <STM32_PINMUX('C', 11, AF8)>;
+    };
 };
 
 &i2c1 {
     status = "okay";
-    clock-frequency = <I2C_BITRATE_STANDARD>;
+    pinctrl-0 = <&i2c1_scl_pb8 &i2c1_sda_pb9>;
+    pinctrl-names = "default";
 };
 
-&adc1 {
+&uart4 {
+    pinctrl-0 = <&uart4_tx_pc10 &uart4_rx_pc11>;
+    pinctrl-names = "default";
+    current-speed = <115200>;
     status = "okay";
-    st,adc-prescaler = <2>;
-    #address-cells = <1>;
-    #size-cells = <0>;
 
-    channel@1 {
-        reg = <1>;
-        zephyr,gain = "ADC_GAIN_1";
-        zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,resolution = <12>;
+    esp32: esp32 {
+        compatible = "espressif,esp-at";
+        status = "okay";
     };
 };

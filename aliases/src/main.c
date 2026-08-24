@@ -1,120 +1,129 @@
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/device.h>
-#include <zephyr/devicetree.h>
-#include <zephyr/drivers/adc.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/uart.h>
-#include <zephyr/sys/printk.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/wifi_mgmt.h>
+#include <zephyr/net/net_event.h>
 #include <stdio.h>
-#include <string.h>
 #include "lcd.h"
 
-#define ADC_NODE   DT_ALIAS(lm35_adc)
-#define I2C_NODE   DT_ALIAS(lcd_i2c)
-#define UART_NODE  DT_ALIAS(sensor_uart)
+LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-#define SLEEP_TIME_SECONDS 3
+#define WIFI_SSID "Redmi 13"
+#define WIFI_PSK  "Sule19033"
 
-static const struct device *adc_dev  = DEVICE_DT_GET(ADC_NODE);
-static const struct device *i2c_dev  = DEVICE_DT_GET(I2C_NODE);
-static const struct device *uart_dev = DEVICE_DT_GET(UART_NODE);
+static struct net_mgmt_event_callback wifi_cb;
+static struct net_mgmt_event_callback ipv4_cb;
+static bool wifi_connected = false;
+static char ip_str[NET_IPV4_ADDR_LEN] = "Baglaniyor...";
 
-#define ADC_CHANNEL 1
-static const struct adc_channel_cfg adc_cfg = {
-    .gain             = ADC_GAIN_1,
-    .reference        = ADC_REF_INTERNAL,
-    .acquisition_time = ADC_ACQ_TIME_DEFAULT,
-    .channel_id       = ADC_CHANNEL,
-    .differential     = 0
-};
-
-void send_uart_string(const struct device *dev, const char *str)
+static void handle_wifi_connect_result(struct net_mgmt_event_callback *cb)
 {
-    for (size_t i = 0; i < strlen(str); i++) {
-        uart_poll_out(dev, str[i]);
+    const struct wifi_status *status = (const struct wifi_status *)cb->info;
+
+    if (status->status) {
+        LOG_ERR("Wi-Fi baglanti hatasi: %d", status->status);
+        wifi_connected = false;
+    } else {
+        LOG_INF("Wi-Fi agina basariyla baglanildi!");
+        wifi_connected = true;
+    }
+}
+
+static void handle_ipv4_result(struct net_if *iface)
+{
+    if (iface && iface->config.ip.ipv4) {
+        net_addr_ntop(AF_INET, &iface->config.ip.ipv4->unicast[0].ipv4.address.in_addr,
+                      ip_str, sizeof(ip_str));
+        LOG_INF("IP Adresi alindi: %s", ip_str);
+    }
+}
+
+static void wifi_mgmt_event_handler(struct net_mgmt_event_callback *cb,
+                                    uint64_t mgmt_event, struct net_if *iface)
+{
+    switch (mgmt_event) {
+    case NET_EVENT_WIFI_CONNECT_RESULT:
+        handle_wifi_connect_result(cb);
+        break;
+    case NET_EVENT_IPV4_ADDR_ADD:
+        handle_ipv4_result(iface);
+        break;
+    case NET_EVENT_WIFI_DISCONNECT_RESULT:
+        LOG_WRN("Wi-Fi baglantisi koptu!");
+        wifi_connected = false;
+        snprintf(ip_str, sizeof(ip_str), "Koptu");
+        break;
+    default:
+        break;
     }
 }
 
 int main(void)
 {
-    int err;
-    int16_t sample_buffer[1];
-    char send_buf[64];
-    char line_buf[17];
-    int sayac = 0;
+    LOG_INF("Sistem Baslatiliyor...");
 
-    struct adc_sequence sequence = {
-        .channels    = BIT(ADC_CHANNEL),
-        .buffer      = sample_buffer,
-        .buffer_size = sizeof(sample_buffer),
-        .resolution  = 12,
+    const struct device *i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
+    if (!device_is_ready(i2c_dev)) {
+        LOG_ERR("I2C1 aygiti hazir degil!");
+        return -1;
+    }
+
+    lcd_init(i2c_dev);
+    lcd_clear(i2c_dev);
+    lcd_set_cursor(i2c_dev, 0, 0);
+    lcd_print(i2c_dev, "WiFi Baslatildi");
+
+    struct net_if *iface = net_if_get_default();
+    if (!iface) {
+        LOG_ERR("Varsayilan ag arayuzu bulunamadi!");
+        return -1;
+    }
+
+    net_mgmt_init_event_callback(&wifi_cb, wifi_mgmt_event_handler,
+                                 NET_EVENT_WIFI_CONNECT_RESULT | NET_EVENT_WIFI_DISCONNECT_RESULT);
+    net_mgmt_init_event_callback(&ipv4_cb, wifi_mgmt_event_handler,
+                                 NET_EVENT_IPV4_ADDR_ADD);
+
+    net_mgmt_add_event_callback(&wifi_cb);
+    net_mgmt_add_event_callback(&ipv4_cb);
+
+    struct wifi_connect_req_params params = {
+        .ssid = (const uint8_t *)WIFI_SSID,
+        .ssid_length = strlen(WIFI_SSID),
+        .psk = (const uint8_t *)WIFI_PSK,
+        .psk_length = strlen(WIFI_PSK),
+        .channel = WIFI_CHANNEL_ANY,
+        .security = WIFI_SECURITY_TYPE_PSK,
+        .band = WIFI_FREQ_BAND_2_4_GHZ,
+        .mfp = WIFI_MFP_OPTIONAL,
     };
 
-    k_msleep(1000);
-   
-    printk("[STM32] Ana Dongu Baslatiliyor...\n");
-    
-    if (!device_is_ready(adc_dev)) {
-        printk("[HATA] ADC aygiti hazir degil!\n");
-    }
-    if (!device_is_ready(uart_dev)) {
-        printk("[HATA] UART aygiti hazir degil!\n");
-    }
-
-    adc_channel_setup(adc_dev, &adc_cfg);
-
-    if (device_is_ready(i2c_dev)) {
-        printk("[BILGI] LCD baslatiliyor...\n");
-        lcd_init(i2c_dev);
-        lcd_clear(i2c_dev);
-        lcd_set_cursor(i2c_dev, 0, 0);
-        lcd_print(i2c_dev, "Sistem Basladi  ");
-        printk("[BILGI] LCD baslatildi.\n");
-    } else {
-        printk("[HATA] I2C cihazi bulunamadi!\n");
-    }
+    char line1_buf[17];
+    char line2_buf[17];
+    int temp_val = 24;
 
     while (1) {
-        sayac++;
+        if (!wifi_connected) {
+            LOG_INF("Wi-Fi baglantisi deneniyor...");
+            net_mgmt(NET_REQUEST_WIFI_CONNECT, iface, &params, sizeof(struct wifi_connect_req_params));
+        }
 
-        /* 1. Sıcaklık Oku */
-        err = adc_read(adc_dev, &sequence);
-        int temp_c = 0;
-        if (err == 0) {
-            int16_t raw_val = sample_buffer[0];
-            int32_t mv_val = raw_val;
-            adc_raw_to_millivolts(3300, ADC_GAIN_1, 12, &mv_val);
-            temp_c = (int)(mv_val / 10);
+        snprintf(line1_buf, sizeof(line1_buf), "Sicaklik: %d C", temp_val);
+        
+        if (wifi_connected) {
+            snprintf(line2_buf, sizeof(line2_buf), "IP:%s", ip_str);
         } else {
-            printk("[HATA] ADC okuma hatasi: %d\n", err);
+            snprintf(line2_buf, sizeof(line2_buf), "WiFi: Baglaniyor");
         }
 
-        /* 2. ESP32'ye UART4 ile veri gonder */
-        snprintf(send_buf, sizeof(send_buf), "SICAKLIK:%d (Paket:%d)\n", temp_c, sayac);
-        send_uart_string(uart_dev, send_buf);
+        lcd_set_cursor(i2c_dev, 0, 0);
+        lcd_print(i2c_dev, line1_buf);
+        lcd_set_cursor(i2c_dev, 1, 0);
+        lcd_print(i2c_dev, line2_buf);
 
-        /* 3. Konsola printk ile bas */
-        printk("[STM32 -> ESP32 Gonderildi]: %s", send_buf);
-
-        /* 4. LCD Ekranına Yaz */
-        if (device_is_ready(i2c_dev)) {
-            snprintf(line_buf, sizeof(line_buf), "Sicaklik: %2d C ", temp_c);
-            lcd_set_cursor(i2c_dev, 0, 0);
-            lcd_print(i2c_dev, line_buf);
-
-            lcd_set_cursor(i2c_dev, 1, 0);
-            lcd_print(i2c_dev, "Durum: AKTIF    ");
-        }
-
-        k_msleep(1500);
-
-        if (device_is_ready(i2c_dev)) {
-            lcd_set_cursor(i2c_dev, 1, 0);
-            lcd_print(i2c_dev, "Durum: UYKUDA   ");
-        }
-
-        printk("[STM32] Uykuya gecildi (%d sn)...\n", SLEEP_TIME_SECONDS);
-        k_sleep(K_SECONDS(SLEEP_TIME_SECONDS));
+        k_sleep(K_SECONDS(3));
     }
 
     return 0;
