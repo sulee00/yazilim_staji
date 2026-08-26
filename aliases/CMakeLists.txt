@@ -3,4 +3,11 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(aliases)
 
 target_include_directories(app PRIVATE include)
-target_sources(app PRIVATE src/main.c src/lcd.c)
+
+target_sources(app PRIVATE 
+    src/main.c 
+    src/lcd.c 
+    src/wifi_mgr.c 
+    src/mqtt_mgr.c 
+    src/app.c
+)
