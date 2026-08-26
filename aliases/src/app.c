@@ -13,7 +13,6 @@ LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 static app_config_t app_cfg;
 static bool config_set = false;
 static bool trigger_mqtt = false;
-static const struct device *i2c_dev;
 
 static void on_ip_ready(const char *ip_addr)
 {
@@ -32,12 +31,13 @@ int app_init(void)
 {
     if (!config_set) return -EPERM;
 
-    i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c1));
-    if (device_is_ready(i2c_dev)) {
-        lcd_init(i2c_dev);
-        lcd_clear(i2c_dev);
-        lcd_set_cursor(i2c_dev, 0, 0);
-        lcd_print(i2c_dev, "App Init...");
+    if (app_cfg.i2c_dev && device_is_ready(app_cfg.i2c_dev)) {
+        lcd_init(app_cfg.i2c_dev);
+        lcd_clear(app_cfg.i2c_dev);
+        lcd_set_cursor(app_cfg.i2c_dev, 0, 0);
+        lcd_print(app_cfg.i2c_dev, "App Init...");
+    } else {
+        LOG_WRN("LCD I2C cihazi hazir degil veya atanmadi.");
     }
 
     wifi_mgr_init(on_ip_ready);
@@ -82,13 +82,13 @@ void app_start_and_wait(void)
             }
         }
 
-        if (device_is_ready(i2c_dev)) {
+        if (app_cfg.i2c_dev && device_is_ready(app_cfg.i2c_dev)) {
             snprintf(line1, sizeof(line1), "Sicaklik: %d C", dummy_temp);
             snprintf(line2, sizeof(line2), mqtt_mgr_is_connected() ? "MQTT: Yayinda" : "MQTT: Bekliyor");
-            lcd_set_cursor(i2c_dev, 0, 0);
-            lcd_print(i2c_dev, line1);
-            lcd_set_cursor(i2c_dev, 1, 0);
-            lcd_print(i2c_dev, line2);
+            lcd_set_cursor(app_cfg.i2c_dev, 0, 0);
+            lcd_print(app_cfg.i2c_dev, line1);
+            lcd_set_cursor(app_cfg.i2c_dev, 1, 0);
+            lcd_print(app_cfg.i2c_dev, line2);
         }
 
         k_sleep(K_MSEC(100));

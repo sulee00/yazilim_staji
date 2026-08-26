@@ -3,8 +3,10 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <zephyr/device.h>
 
 typedef struct {
+    const struct device *i2c_dev;   /* Donanım bağımsız I2C aygıt pointer'ı */
     const char *wifi_ssid;
     const char *wifi_password;
     const char *mqtt_broker_ip;

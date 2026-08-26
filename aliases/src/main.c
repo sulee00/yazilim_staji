@@ -1,8 +1,10 @@
 #include "app.h"
+#include <zephyr/device.h>
 
 int main(void)
 {
     app_config_t config = {
+        .i2c_dev             = DEVICE_DT_GET(DT_NODELABEL(i2c1)),
         .wifi_ssid           = "Redmi 13",
         .wifi_password       = "WIFI_SIFRENIZ",
         .mqtt_broker_ip      = "10.150.149.139",
