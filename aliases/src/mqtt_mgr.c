@@ -15,6 +15,29 @@ static uint8_t tx_buffer[256];
 static bool connected = false;
 static bool connecting = false;
 
+static mqtt_msg_callback_t app_msg_cb = NULL;
+static char sub_topic_buf[64];
+
+static int subscribe_to_topic(const char *topic)
+{
+    struct mqtt_topic subscribe_topic = {
+        .topic = {
+            .utf8 = (uint8_t *)topic,
+            .size = strlen(topic),
+        },
+        .qos = MQTT_QOS_0_AT_MOST_ONCE,
+    };
+
+    const struct mqtt_subscription_list subscription_list = {
+        .list = &subscribe_topic,
+        .list_count = 1,
+        .message_id = sys_rand32_get(),
+    };
+
+    LOG_INF("Abone olunuyor: %s", topic);
+    return mqtt_subscribe(&client_ctx, &subscription_list);
+}
+
 static void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt_evt *evt)
 {
     switch (evt->type) {
@@ -22,16 +45,44 @@ static void mqtt_evt_handler(struct mqtt_client *const client, const struct mqtt
         if (evt->result == 0) {
             LOG_INF("MQTT baglantisi basarili.");
             connected = true;
+            if (strlen(sub_topic_buf) > 0) {
+                subscribe_to_topic(sub_topic_buf);
+            }
         } else {
             LOG_ERR("MQTT Connack hatasi: %d", evt->result);
             connected = false;
         }
         connecting = false;
         break;
+
     case MQTT_EVT_DISCONNECT:
         connected = false;
         connecting = false;
+        LOG_WRN("MQTT baglantisi koptu.");
         break;
+
+    case MQTT_EVT_PUBLISH: {
+        const struct mqtt_publish_param *p = &evt->param.publish;
+        char topic[64] = {0};
+        char payload[128] = {0};
+
+        size_t t_len = p->message.topic.topic.size;
+        if (t_len >= sizeof(topic)) t_len = sizeof(topic) - 1;
+        memcpy(topic, p->message.topic.topic.utf8, t_len);
+
+        size_t p_len = p->message.payload.len;
+        if (p_len >= sizeof(payload)) p_len = sizeof(payload) - 1;
+
+        mqtt_read_publish_payload_blocking(client, (uint8_t *)payload, p_len);
+
+        LOG_INF("Gelen Mesaj [%s]: %s", topic, payload);
+
+        if (app_msg_cb) {
+            app_msg_cb(topic, payload);
+        }
+        break;
+    }
+
     default:
         break;
     }
@@ -43,6 +94,13 @@ int mqtt_mgr_init(const mqtt_mgr_config_t *cfg)
     broker4->sin_family = AF_INET;
     broker4->sin_port = htons(cfg->broker_port);
     zsock_inet_pton(AF_INET, cfg->broker_ip, &broker4->sin_addr);
+
+    app_msg_cb = cfg->on_message;
+    if (cfg->subscribe_topic) {
+        strncpy(sub_topic_buf, cfg->subscribe_topic, sizeof(sub_topic_buf) - 1);
+    } else {
+        sub_topic_buf[0] = '\0';
+    }
 
     mqtt_client_init(&client_ctx);
     client_ctx.broker = &broker;

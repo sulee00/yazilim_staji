@@ -1,4 +1,5 @@
 #include "lcd.h"
+#include <stdio.h>
 #include <zephyr/kernel.h>
 
 #define LCD_BACKLIGHT 0x08
@@ -12,7 +13,6 @@ static void lcd_write_nibble(const struct device *i2c_dev, uint8_t nibble, uint8
     buf[0] = data | ENABLE;
     buf[1] = data & ~ENABLE;
 
-    
     i2c_write(i2c_dev, &buf[0], 1, LCD_I2C_ADDR);
     k_busy_wait(100);
     i2c_write(i2c_dev, &buf[1], 1, LCD_I2C_ADDR);
@@ -73,4 +73,42 @@ void lcd_init(const struct device *i2c_dev)
     lcd_clear(i2c_dev);
     lcd_send_cmd(i2c_dev, 0x06); 
     k_msleep(2);
+}
+
+void lcd_display_sensors_cycle(const struct device *i2c_dev, float lm35_temp, float bmp_temp, int soil_moist, float pressure)
+{
+    static int step = 0;
+    char line1[17];
+    char line2[17];
+
+    switch (step) {
+    case 0:
+        snprintf(line1, sizeof(line1), "LM35 Sicaklik   ");
+        snprintf(line2, sizeof(line2), "   %.1f C       ", (double)lm35_temp);
+        step = 1;
+        break;
+    case 1:
+        snprintf(line1, sizeof(line1), "BMP280 Sicaklik ");
+        snprintf(line2, sizeof(line2), "   %.1f C       ", (double)bmp_temp);
+        step = 2;
+        break;
+    case 2:
+        snprintf(line1, sizeof(line1), "Toprak Nemi     ");
+        snprintf(line2, sizeof(line2), "   %%%d          ", soil_moist);
+        step = 3;
+        break;
+    case 3:
+        snprintf(line1, sizeof(line1), "Hava Basinci    ");
+        snprintf(line2, sizeof(line2), "   %.1f hPa    ", (double)pressure);
+        step = 0;
+        break;
+    default:
+        step = 0;
+        break;
+    }
+
+    lcd_set_cursor(i2c_dev, 0, 0);
+    lcd_print(i2c_dev, line1);
+    lcd_set_cursor(i2c_dev, 1, 0);
+    lcd_print(i2c_dev, line2);
 }
